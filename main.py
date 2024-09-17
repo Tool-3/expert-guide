@@ -1,68 +1,91 @@
 import streamlit as st
-import pandas as pd
-import requests
-from io import StringIO
-import datetime
 
-# Function to fetch historical stock data from NSE using a direct CSV link
-def fetch_nse_data(symbol, start_date, end_date):
-    # Convert dates to the format used by NSE
-    start_date_str = start_date.strftime("%d-%b-%Y").upper()
-    end_date_str = end_date.strftime("%d-%b-%Y").upper()
-    
-    # Construct the download link for the historical data
-    url = f"https://www.nseindia.com/api/option-chain-indices?symbol={symbol}"
-    
-    # Headers for the request
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'Accept-Language': 'en-US,en;q=0.9'
+# Create a sidebar for user input
+st.sidebar.title("Indian Options Analytical Tool")
+st.sidebar.header("Select Option")
+option_type = st.sidebar.selectbox("Select Option Type", ["Call", "Put"])
+strike_price = st.sidebar.number_input("Enter Strike Price")
+expiration_date = st.sidebar.date_input("Select Expiration Date")
+symbol = st.sidebar.selectbox("Select Underlying Symbol", ["NIFTY", "BANKNIFTY", "OTHER"])
+
+if symbol == "OTHER":
+    underlying_stock = st.sidebar.text_input("Enter Underlying Stock Symbol")
+else:
+    underlying_stock = symbol
+
+import alpha_vantage.timeseries as av
+
+# Set Alpha Vantage API key
+av_api_key = "1VOMFY36F61VJZKC"
+
+# Create an Alpha Vantage client
+av_client = av.TimeSeries(key=av_api_key, output_format='pandas')
+
+# Define a function to fetch options data from Alpha Vantage
+def fetch_options_data(symbol, option_type, strike_price, expiration_date):
+    params = {
+        'function': 'OPTION_CHAINS',
+        'symbol': symbol,
+        'expiration': expiration_date.strftime('%Y-%m-%d'),
+        'strike': strike_price,
+        'option_type': option_type
     }
+    response = av_client.get(params)
+    return response
+Data Processing and Analysis
+
+
+import pandas as pd
+import yfinance as yf
+
+# Define a function to process and analyze options data
+def process_options_data(options_data):
+    # Convert data to a Pandas DataFrame
+    df = pd.DataFrame(options_data)
     
-    try:
-        response = requests.get(url, headers=headers)
-        response.raise_for_status()
-        
-        # Convert the response JSON to DataFrame
-        data = response.json()
-        calls_df = pd.json_normalize(data['records']['data'])
-        
-        # Process call options data
-        if 'CE' in data['records']:
-            ce_data = pd.json_normalize(data['records']['data'])
-            ce_data['date'] = pd.to_datetime(ce_data['date'])
-            ce_data = ce_data.sort_values(by=['date'])
-            return ce_data
-        
-        return pd.DataFrame()
-        
-    except requests.RequestException as e:
-        st.error(f"Error fetching data from NSE: {str(e)}")
-        return pd.DataFrame()
+    # Calculate Greeks (Delta, Gamma, Theta, Vega)
+    df['delta'] = df['call_delta'] if option_type == 'Call' else df['put_delta']
+    df['gamma'] = df['call_gamma'] if option_type == 'Call' else df['put_gamma']
+    df['theta'] = df['call_theta'] if option_type == 'Call' else df['put_theta']
+    df['vega'] = df['call_vega'] if option_type == 'Call' else df['put_vega']
+    
+    # Add underlying stock price data
+    stock_data = yf.download(underlying_stock, start=expiration_date, end=expiration_date)
+    df['underlying_price'] = stock_data['Close'][0]
+    
+    # Calculate additional metrics (e.g., ROI, Breakeven Point)
+    df['roi'] = (df['strike'] - df['underlying_price']) / df['strike']
+    df['breakeven_point'] = df['strike'] + (df['strike'] * df['roi'])
+    
+    return df
 
-# Streamlit App
-def main():
-    st.set_page_config(page_title="NSE Stock Data Analysis", page_icon="📈")
-    st.title("NSE Stock Data Analysis Tool")
+# Create a Streamlit app
+st.title("Indian Options Analytical Tool")
 
-    # Sidebar for user input
-    st.sidebar.header("User Inputs")
-    symbol = st.sidebar.text_input("Enter Stock Symbol (e.g., RELIANCE)", value="RELIANCE")
-    end_date = st.sidebar.date_input("End Date", value=datetime.date.today())
-    start_date = st.sidebar.date_input("Start Date", value=datetime.date(2023, 1, 1))
+# Fetch options data from Alpha Vantage
+options_data = fetch_options_data(underlying_stock, option_type, strike_price, expiration_date)
 
-    # Fetch and process data
-    if symbol:
-        st.subheader(f"Fetching Data for {symbol}")
-        data = fetch_nse_data(symbol, start_date, end_date)
-        
-        if not data.empty:
-            st.write("Processed Data:")
-            st.write(data)
-            st.line_chart(data.set_index('date')['close'])
-        else:
-            st.info("No data available for the selected parameters.")
+# Process and analyze options data
+df = process_options_data(options_data)
 
-if __name__ == "__main__":
-    main()
+# Display results
+st.header("Options Data")
+st.write(df)
+
+st.header("Greeks and Metrics")
+st.write(df[['delta', 'gamma', 'theta', 'vega', 'roi', 'breakeven_point']])
+
+# Add a button to download data
+@st.cache
+def download_data(df):
+    return df.to_csv(index=False)
+
+download_button = st.button("Download Data")
+if download_button:
+    st.markdown(get_table_download_link(download_data(df)), unsafe_allow_html=True)
+
+def get_table_download_link(df):
+    csv = df.to_csv(index=False)
+    b64 = base64.b64encode(csv.encode()).decode()  # some strings <-> bytes conversions necessary here
+    href = f'<a href="data:file/csv;base64,{b64}" download="options_data.csv">Download CSV</a>'
+    return href
