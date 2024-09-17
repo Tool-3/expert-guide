@@ -32,9 +32,7 @@ def fetch_options_data(symbol, option_type, strike_price, expiration_date):
     }
     response = av_client.get(params)
     return response
-Data Processing and Analysis
-
-
+    
 import pandas as pd
 import yfinance as yf
 
