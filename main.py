@@ -21,16 +21,14 @@ av_api_key = "1VOMFY36F61VJZKC"
 # Create an Alpha Vantage client
 av_client = av.TimeSeries(key=av_api_key, output_format='pandas')
 
-# Define a function to fetch options data from Alpha Vantage
 def fetch_options_data(symbol, option_type, strike_price, expiration_date):
     params = {
-        'function': 'OPTION_CHAINS',
         'symbol': symbol,
         'expiration': expiration_date.strftime('%Y-%m-%d'),
         'strike': strike_price,
         'option_type': option_type
     }
-    response = av_client.get(params)
+    response, meta_data = av_client.get_option_chain(symbol, output_format='pandas')
     return response
     
 import pandas as pd
