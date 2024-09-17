@@ -1,27 +1,39 @@
-import yfinance as yf
+import streamlit as st
+import nsepy as nse
 import pandas as pd
 import numpy as np
-import streamlit as st
+import datetime
 from scipy.stats import norm
+import plotly.express as px
 
-# Fetch stock price and option chain
-def fetch_data(ticker):
-    stock = yf.Ticker(ticker)
-    stock_price = stock.history(period="1d")['Close'].iloc[0]
-    
+def get_stock_price(symbol):
+    today = datetime.date.today()
+    data = nse.get_history(symbol=symbol, start=today, end=today)
+    if not data.empty:
+        return data['Close'].iloc[-1]
+    else:
+        st.error(f"No data found for {symbol}")
+        return None
+
+def get_options_chain(symbol, expiry):
+    # Fetch current date options data
+    expiry_date = datetime.datetime.strptime(expiry, "%Y-%m-%d").date()
     try:
-        expirations = stock.options
-        option_chain = stock.option_chain(expirations[0])
-        calls = option_chain.calls
-        puts = option_chain.puts
-    except:
-        st.error("Error fetching options data.")
-        return None, None, None
+        options_data = nse.get_index_pe_history(symbol=symbol, start=expiry_date, end=expiry_date)
+        if options_data.empty:
+            st.error(f"No options data found for {symbol}")
+            return None, None
+    except Exception as e:
+        st.error(f"Error fetching options data: {str(e)}")
+        return None, None
     
-    return stock_price, calls, puts, expirations
-  # Calculate Greeks using the Black-Scholes model
+    calls = options_data[options_data['OPTION_TYP'] == 'CE']
+    puts = options_data[options_data['OPTION_TYP'] == 'PE']
+    
+    return calls, puts
+
 def calculate_greeks(option_df, stock_price, risk_free_rate=0.01):
-    T = (pd.to_datetime(option_df['lastTradeDate']) - pd.Timestamp('today')).dt.days / 365.0
+    T = (pd.to_datetime(option_df['expiry']) - pd.Timestamp('today')).dt.days / 365.0
     d1 = (np.log(stock_price / option_df['strike']) + (risk_free_rate + 0.5 * option_df['impliedVolatility'] ** 2) * T) / (option_df['impliedVolatility'] * np.sqrt(T))
     d2 = d1 - option_df['impliedVolatility'] * np.sqrt(T)
     
@@ -32,43 +44,42 @@ def calculate_greeks(option_df, stock_price, risk_free_rate=0.01):
     option_df['Rho'] = option_df['strike'] * T * np.exp(-risk_free_rate * T) * norm.cdf(d2)
     
     return option_df
-  
-  def calculate_probability_of_profit(option_df, stock_price):
-    # Assuming log-normal distribution and using Delta to approximate the probability of profit
-    option_df['POP'] = norm.cdf(option_df['Delta'])  # Simplified, adjust based on conditions (e.g., Call/Put)
-    return option_df
-  import plotly.express as px
 
-st.title("📈 Indian Stock Market Options Trading Analytics Tool")
+st.title("📈 Indian Stock Market Options Trading Analytics Tool (NSEpy Integrated)")
 st.sidebar.header("User Inputs")
 
-# Ticker List
-INDIAN_TICKERS = ['RELIANCE.NS', 'TCS.NS', 'INFY.NS', 'HDFCBANK.NS', 'HINDUNILVR.NS', 'ITC.NS', 'ICICIBANK.NS', 'SBIN.NS', 'LT.NS', 'BHARTIARTL.NS']
-ticker = st.sidebar.selectbox("Select Stock Symbol", options=INDIAN_TICKERS)
+# List of symbols (you can add more stock symbols here)
+INDIAN_TICKERS = ['RELIANCE', 'TCS', 'INFY', 'HDFCBANK', 'ITC', 'SBIN']
 
-if ticker:
-    # Fetch stock and option data
-    stock_price, calls, puts, expirations = fetch_data(ticker)
+# Stock symbol selection
+symbol = st.sidebar.selectbox("Select Stock Symbol", options=INDIAN_TICKERS)
+
+# Select expiry date for options
+expiry = st.sidebar.date_input("Select Expiry Date", min_value=datetime.date.today())
+
+if symbol:
+    # Fetch stock price
+    stock_price = get_stock_price(symbol)
     
-    if stock_price and not calls.empty:
-        # Display stock price
-        st.write(f"**{ticker} Current Price**: ₹{stock_price}")
+    if stock_price:
+        st.write(f"**{symbol} Current Price**: ₹{stock_price}")
         
-        # Select option type
-        option_type = st.sidebar.radio("Select Option Type", ('Calls', 'Puts'))
-        options_data = calls if option_type == 'Calls' else puts
+        # Fetch options chain
+        calls, puts = get_options_chain(symbol, expiry.strftime("%Y-%m-%d"))
+        
+        if calls is not None:
+            # Select Calls or Puts
+            option_type = st.sidebar.radio("Select Option Type", ('Calls', 'Puts'))
+            options_data = calls if option_type == 'Calls' else puts
 
-        # Calculate Greeks
-        options_data = calculate_greeks(options_data, stock_price)
-        
-        # Calculate Probability of Profit
-        options_data = calculate_probability_of_profit(options_data, stock_price)
-        
-        # Display Options Data
-        st.write(f"### {option_type} Options for {ticker}")
-        st.dataframe(options_data)
-        
-        # Plot Greeks
-        fig = px.scatter(options_data, x='strike', y='Delta', size='openInterest', color='impliedVolatility',
-                         hover_data=['Gamma', 'Theta', 'Vega', 'Rho'], title=f"{option_type} Greeks")
-        st.plotly_chart(fig)
+            # Calculate Greeks
+            options_data = calculate_greeks(options_data, stock_price)
+            
+            # Display Options Data
+            st.write(f"### {option_type} Options for {symbol}")
+            st.dataframe(options_data)
+            
+            # Plot Greeks
+            fig = px.scatter(options_data, x='strike', y='Delta', size='openInterest', color='impliedVolatility',
+                             hover_data=['Gamma', 'Theta', 'Vega', 'Rho'], title=f"{option_type} Greeks")
+            st.plotly_chart(fig)
