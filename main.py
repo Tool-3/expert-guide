@@ -14,16 +14,19 @@ symbol = st.text_input('Enter stock symbol', 'TCS')
 
 # Fetch stock data
 if symbol:
-    data, meta_data = ts.get_daily(symbol=symbol, outputsize='full')
-    st.write(f"Data for {symbol}:")
-    st.write(data.head())
+    try:
+        data, meta_data = ts.get_daily(symbol=symbol, outputsize='full')
+        st.write(f"Data for {symbol}:")
+        st.write(data.head())
 
-    # Plot data
-    st.write("Closing Price Chart:")
-    plt.figure(figsize=(10, 5))
-    plt.plot(data.index, data['4. close'], label='Closing Price')
-    plt.title(f'{symbol} Closing Price')
-    plt.xlabel('Date')
-    plt.ylabel('Price')
-    plt.legend()
-    st.pyplot(plt)
+        # Plot data
+        st.write("Closing Price Chart:")
+        plt.figure(figsize=(10, 5))
+        plt.plot(data.index, data['4. close'], label='Closing Price')
+        plt.title(f'{symbol} Closing Price')
+        plt.xlabel('Date')
+        plt.ylabel('Price')
+        plt.legend()
+        st.pyplot(plt)
+    except Exception as e:
+        st.error(f"Error fetching data: {e}")
